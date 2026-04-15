@@ -1,0 +1,7 @@
+train: D:/Programdata/yolov7/dataset/exdark/images/train
+val: D:/Programdata/yolov7/dataset/exdark/images/val
+test: D:/Programdata/yolov7/dataset/exdark/images/test
+
+nc: 12
+
+names: ['Bicycle','Boat','Bottle','Bus','Car','Cat','Chair','Cup','Dog','Motorbike','People','Table']
