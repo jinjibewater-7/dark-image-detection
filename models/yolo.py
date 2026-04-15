@@ -516,20 +516,10 @@ class Model(nn.Module):
     def __init__(self, cfg='yolor-csp-c.yaml', ch=3, nc=None, anchors=None):  # model, input channels, number of classes
         super(Model, self).__init__()
 
-        # FeatEnhancer-lite
-        self.use_feat_enhancer = True
-
-        # 这里先按 YOLOv7 常见通道设置
-        # 如果后面报通道不匹配，再改
-        self.feat_layer_ids = (102, 103, 104)
-        self.feat_channels = (256, 512, 1024)
-
-        self.feat_enhancer = FeatEnhancerLite(
-            c3=self.feat_channels[0],
-            c4=self.feat_channels[1],
-            c5=self.feat_channels[2],
-            residual_scale=0.3
-        )
+        self.use_feat_enhancer = False
+        self.feat_layer_ids = ()
+        self.feat_channels = ()
+        self.feat_enhancer = None
         if isinstance(cfg, dict):
             self.yaml = cfg  # model dict
         else:  # is *.yaml
@@ -548,6 +538,7 @@ class Model(nn.Module):
             self.yaml['anchors'] = round(anchors)  # override yaml value
         self.model, self.save = parse_model(deepcopy(self.yaml), ch=[ch])  # model, savelist
         self.names = [str(i) for i in range(self.yaml['nc'])]  # default names
+        self._init_feat_enhancer()
         # print([x.shape for x in self.forward(torch.zeros(1, ch, 64, 64))])
 
         # Build strides, anchors
@@ -604,6 +595,31 @@ class Model(nn.Module):
         self.info()
         logger.info('')
 
+    def _init_feat_enhancer(self):
+        self.use_feat_enhancer = self.yaml.get('use_feat_enhancer', True)
+        if not self.use_feat_enhancer:
+            logger.info('FeatEnhancerLite disabled by config.')
+            return
+
+        detect_module = self.model[-1]
+        detect_from = detect_module.f if isinstance(detect_module.f, (list, tuple)) else [detect_module.f]
+        if len(detect_from) < 3 or not hasattr(detect_module, 'm'):
+            logger.warning('FeatEnhancerLite init skipped: detect head does not expose >=3 pyramid inputs.')
+            self.use_feat_enhancer = False
+            return
+
+        self.feat_layer_ids = tuple(detect_from[-3:])
+        detect_in_channels = [conv.in_channels for conv in detect_module.m]
+        self.feat_channels = tuple(detect_in_channels[-3:])
+
+        self.feat_enhancer = FeatEnhancerLite(
+            c3=self.feat_channels[0],
+            c4=self.feat_channels[1],
+            c5=self.feat_channels[2],
+            residual_scale=self.yaml.get('feat_enhancer_residual_scale', 0.3)
+        )
+        logger.info(f'FeatEnhancerLite enabled on layers={self.feat_layer_ids}, channels={self.feat_channels}.')
+
     def forward(self, x, augment=False, profile=False):
         if augment:
             img_size = x.shape[-2:]
@@ -656,7 +672,7 @@ class Model(nn.Module):
             x = m(x)
 
             # 收集三层检测前特征
-            if self.use_feat_enhancer and m.i in self.feat_layer_ids:
+            if self.use_feat_enhancer and self.feat_enhancer is not None and m.i in self.feat_layer_ids:
                 ms_feats[m.i] = x
 
                 # 到 104 层时三层都齐了，统一增强一次

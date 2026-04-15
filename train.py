@@ -309,6 +309,23 @@ def train(hyp, opt, device, tb_writer=None):
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         model.train()
 
+        # 在训练后期关闭强增强，通常有助于提升最终验证 mAP
+        if opt.close_mosaic > 0 and epoch >= (epochs - opt.close_mosaic):
+            if hasattr(dataset, 'mosaic'):
+                dataset.mosaic = False
+            if hasattr(dataset, 'hyp'):
+                for k in ('mosaic', 'mixup', 'copy_paste', 'paste_in'):
+                    if k in dataset.hyp:
+                        dataset.hyp[k] = 0.0
+            if epoch == (epochs - opt.close_mosaic):
+                logger.info(f'Closing mosaic/mixup/copy-paste for final {opt.close_mosaic} epochs.')
+
+        # 特征损失 warmup，降低前期对检测主干学习的干扰
+        feat_loss_gain = hyp.get('feat_loss_gain', 0.01)
+        feat_warmup_epochs = max(int(hyp.get('feat_loss_warmup_epochs', 0)), 0)
+        if feat_warmup_epochs > 0 and epoch < feat_warmup_epochs:
+            feat_loss_gain = feat_loss_gain * float(epoch + 1) / feat_warmup_epochs
+
         # Update image weights (optional)
         if opt.image_weights:
             # Generate indices
@@ -366,7 +383,7 @@ def train(hyp, opt, device, tb_writer=None):
                 else:
                     loss_det, loss_items = compute_loss(pred, targets.to(device), imgs)  # loss scaled by batch_size
 
-                loss = loss_det + 0.01 * loss_feat
+                loss = loss_det + feat_loss_gain * loss_feat
                 if i % 20 == 0:
                     print(
                         "loss_det:", loss_det.detach().item(),
@@ -574,6 +591,8 @@ if __name__ == '__main__':
     parser.add_argument('--freeze', nargs='+', type=int, default=[0],
                         help='Freeze layers: backbone of yolov7=50, first3=0 1 2')
     parser.add_argument('--v5-metric', action='store_true', help='assume maximum recall as 1.0 in AP calculation')
+    parser.add_argument('--close-mosaic', type=int, default=10,
+                        help='disable mosaic/mixup/copy-paste in final N epochs')
     opt = parser.parse_args()
 
     # Set DDP variables
