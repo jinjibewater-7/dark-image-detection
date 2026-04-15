@@ -12,7 +12,7 @@
 - train.py：训练入口
 - test.py：验证入口
 - models/：YOLO 网络结构与增强模块
-- models/feat_enhance_lite.py：增强模块
+- models/feat_enhancer_lite.py：增强模块
 - data/：数据集配置
 - cfg/：模型配置
 - utils/：训练与推理辅助函数
